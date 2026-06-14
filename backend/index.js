@@ -75,7 +75,25 @@ app.get("/auth", async (req, res) => {
 app.get("/auth/callback", async (req, res) => {
   try {
     const session = await Shopify.Auth.validateAuthCallback(req, res, req.query);
-    return res.redirect(`/?shop=${session.shop}`);
+
+    // Auto-activate the delivery customization function after OAuth
+    const client = new Shopify.Clients.Graphql(session.shop, session.accessToken);
+    await client.query({
+      data: {
+        query: `mutation {
+          deliveryCustomizationCreate(deliveryCustomization: {
+            functionId: "019e367b-e98b-7d6a-9509-538cb2c6e8f5"
+            title: "B2B Free Shipping"
+            enabled: true
+          }) {
+            deliveryCustomization { id enabled }
+            userErrors { field message }
+          }
+        }`
+      }
+    });
+
+    return res.redirect(\`/?shop=\${session.shop}\`);
   } catch (error) {
     console.error("Auth callback failed:", error);
     return res.status(500).send("Authentication callback failed.");

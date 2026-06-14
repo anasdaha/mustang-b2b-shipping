@@ -26,7 +26,7 @@
   "author": "akhtar",
   "private": true,
   "workspaces": [
-    "extensions/*"
+    "extensions/b2b-free-shipping"
   ],
   "devDependencies": {
     "javy-cli": "^3.0.1"
