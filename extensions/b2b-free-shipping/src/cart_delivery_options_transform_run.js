@@ -9,23 +9,32 @@
 const NO_CHANGES = { operations: [] };
 
 // ---------------------------------------------------------------------------
-// The title of the free shipping rate for B2B customers.
-// Must EXACTLY match the rate name in:
+// B2B free shipping rate title — must EXACTLY match the rate name in:
 // Shopify Admin → Settings → Shipping and Delivery → Manage rates
 // ---------------------------------------------------------------------------
 const RATE_B2B_FREE = 'dealer free shipping';
 
 // ---------------------------------------------------------------------------
-// Regional shipping rates for D2C (non-B2B) customers.
-// Must EXACTLY match rate titles in Shopify Admin → Shipping and Delivery.
-// Set a country to null to show all rates for that country without filtering.
+// D2C allowed rates per country.
+// These are the EXACT rate names from your shipping zones.
+// D2C customers will only see rates listed here for their country.
+// "Dealer Free Shipping" is never listed here so D2C never sees it.
 // ---------------------------------------------------------------------------
+/** @type {Record<string, string[]>} */
 const D2C_ALLOWED_RATES_BY_COUNTRY = {
-  PK: ['Standard Shipping - Pakistan', 'Express Shipping - Pakistan'],
-  GB: ['Standard Shipping - UK', 'Express Shipping - UK'],
-  US: ['Standard Shipping - US', 'Express Shipping - US'],
-  AE: ['Standard Shipping - UAE'],
-  DEFAULT: null, // unlisted countries → no filtering, all rates shown
+  // US has 3 zones with different rate names — allow all of them
+  US: [
+    'Flat Rate Shipping',  // US Zone 2 - Mid
+    'Flat Shipping',       // US Zone 1 - Near and Zone 3 - Far
+  ],
+  // Canada zones
+  CA: [
+    'Flat Shipping *does not include duties or taxes*',
+  ],
+  // All other countries (International zones)
+  DEFAULT: [
+    'Flat Shipping *does not include duties or taxes*',
+  ],
 };
 
 /**
@@ -42,17 +51,28 @@ export function cartDeliveryOptionsTransformRun(input) {
 
   // -------------------------------------------------------------------------
   // B2B PATH
-  // Customer belongs to a company. Check if free shipping is enabled via
-  // the company metafield "custom.free_shipping = true".
+  // Customer belongs to a B2B company.
+  // If free_shipping metafield = true → show ONLY "Dealer Free Shipping"
+  // If free_shipping metafield = false/not set → hide ALL rates
   // -------------------------------------------------------------------------
   if (purchasingCompany) {
     const freeShippingEnabled =
       purchasingCompany.company?.metafield?.value === 'true';
 
-    // Company not eligible → no changes, show whatever rates exist
-    if (!freeShippingEnabled) return NO_CHANGES;
+    if (!freeShippingEnabled) {
+      // B2B company without free shipping — hide ALL rates
+      // They should contact the store for shipping arrangements
+      for (const group of deliveryGroups) {
+        for (const option of group.deliveryOptions) {
+          operations.push({
+            deliveryOptionHide: { deliveryOptionHandle: option.handle },
+          });
+        }
+      }
+      return { operations };
+    }
 
-    // Eligible → hide everything except "Dealer Free Shipping"
+    // Eligible B2B → hide everything except "Dealer Free Shipping"
     for (const group of deliveryGroups) {
       for (const option of group.deliveryOptions) {
         const title = option.title?.toLowerCase() || '';
@@ -69,16 +89,17 @@ export function cartDeliveryOptionsTransformRun(input) {
 
   // -------------------------------------------------------------------------
   // D2C PATH
-  // Non-B2B customer. Filter visible rates by their shipping country.
+  // Non-B2B customer. Show only their region's rates.
+  // "Dealer Free Shipping" is not in any allowed list so it's always hidden.
   // -------------------------------------------------------------------------
   const countryCode =
     deliveryGroups[0]?.deliveryAddress?.countryCode ?? 'DEFAULT';
 
   const allowedRates =
-    D2C_ALLOWED_RATES_BY_COUNTRY[countryCode] ??
+    D2C_ALLOWED_RATES_BY_COUNTRY[/** @type {string} */ (countryCode)] ??
     D2C_ALLOWED_RATES_BY_COUNTRY['DEFAULT'];
 
-  // No filter configured for this country → show all rates
+  // No filter configured → show all rates
   if (!allowedRates) return NO_CHANGES;
 
   const allowedLower = allowedRates.map((r) => r.toLowerCase());
