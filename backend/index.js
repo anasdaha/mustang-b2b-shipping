@@ -93,7 +93,7 @@ app.get("/auth/callback", async (req, res) => {
       }
     });
 
-    return res.redirect(\`/?shop=\${session.shop}\`);
+    return res.redirect(`/?shop=${session.shop}`);
   } catch (error) {
     console.error("Auth callback failed:", error);
     return res.status(500).send("Authentication callback failed.");
