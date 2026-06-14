@@ -31,20 +31,31 @@ Shopify.Context.initialize({
   SCOPES: SCOPES.split(","),
   HOST_NAME,
   API_VERSION: SHOPIFY_API_VERSION,
-  IS_EMBEDDED_APP: true,
+  IS_EMBEDDED_APP: false,  // non-embedded to avoid iframe cookie issues
   SESSION_STORAGE: new Shopify.Session.MemorySessionStorage(),
 });
 
 const app = express();
 app.set("trust proxy", 1);
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "frame-ancestors https://*.myshopify.com https://admin.shopify.com"
+  );
+  next();
+});
+
 app.use(cookieParser());
 app.use(
   cookieSession({
     name: "shopify.session",
     secret: SHOPIFY_API_SECRET,
-    secure: process.env.NODE_ENV === "production",
+    secure: true,
     sameSite: "none",
     httpOnly: true,
+    maxAge: 60 * 60 * 1000, // 1 hour
   })
 );
 app.use(express.json());
@@ -56,8 +67,8 @@ async function getClient(req, res) {
   return new Shopify.Clients.Graphql(session.shop, session.accessToken);
 }
 
-// Helper: get existing delivery customization ID
-async function getCustomizationId(client) {
+// Helper: get existing delivery customization
+async function getCustomization(client) {
   const result = await client.query({
     data: {
       query: `{
@@ -89,27 +100,32 @@ app.get("/", async (req, res) => {
       return res.redirect(`/auth?shop=${shop}`);
     }
 
-    const customization = await getCustomizationId(client);
+    const customization = await getCustomization(client);
     const isActive = customization?.enabled === true;
     const statusColor = isActive ? "#008060" : "#d72c0d";
-    const statusText = isActive ? "Active" : "Inactive";
+    const statusText = isActive ? "✅ Active" : "❌ Inactive";
 
     return res.send(`
       <html><body style="font-family:sans-serif;padding:40px;max-width:600px">
         <h1>B2B Free Shipping</h1>
-        <p>Status: <strong style="color:${statusColor}">${statusText}</strong></p>
-        ${isActive
-          ? `<form method="POST" action="/deactivate?shop=${shop}">
-               <button type="submit" style="background:#d72c0d;color:white;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px">
-                 Disable Function
-               </button>
-             </form>`
-          : `<form method="POST" action="/activate?shop=${shop}">
-               <button type="submit" style="background:#008060;color:white;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;font-size:16px">
-                 Enable Function
-               </button>
-             </form>`
+        <p>Function status: <strong style="color:${statusColor}">${statusText}</strong></p>
+        <hr/>
+        ${
+          isActive
+            ? `<form method="POST" action="/deactivate?shop=${shop}">
+                 <button type="submit" style="background:#d72c0d;color:white;padding:12px 24px;border:none;border-radius:4px;cursor:pointer;font-size:16px">
+                   Disable Function
+                 </button>
+               </form>`
+            : `<form method="POST" action="/activate?shop=${shop}">
+                 <button type="submit" style="background:#008060;color:white;padding:12px 24px;border:none;border-radius:4px;cursor:pointer;font-size:16px">
+                   Enable Function
+                 </button>
+               </form>`
         }
+        <p style="color:#666;font-size:14px;margin-top:24px">
+          Shop: ${shop}
+        </p>
       </body></html>
     `);
   } catch (err) {
@@ -125,20 +141,39 @@ app.post("/activate", async (req, res) => {
     const client = await getClient(req, res);
     if (!client) return res.redirect(`/auth?shop=${shop}`);
 
-    await client.query({
-      data: {
-        query: `mutation {
-          deliveryCustomizationCreate(deliveryCustomization: {
-            functionId: "${FUNCTION_ID}"
-            title: "${CUSTOMIZATION_TITLE}"
-            enabled: true
-          }) {
-            deliveryCustomization { id enabled }
-            userErrors { field message }
-          }
-        }`,
-      },
-    });
+    const existing = await getCustomization(client);
+    if (existing) {
+      // Already exists, just enable it
+      await client.query({
+        data: {
+          query: `mutation {
+            deliveryCustomizationUpdate(
+              id: "${existing.id}",
+              deliveryCustomization: { enabled: true }
+            ) {
+              deliveryCustomization { id enabled }
+              userErrors { field message }
+            }
+          }`,
+        },
+      });
+    } else {
+      // Create new
+      await client.query({
+        data: {
+          query: `mutation {
+            deliveryCustomizationCreate(deliveryCustomization: {
+              functionId: "${FUNCTION_ID}"
+              title: "${CUSTOMIZATION_TITLE}"
+              enabled: true
+            }) {
+              deliveryCustomization { id enabled }
+              userErrors { field message }
+            }
+          }`,
+        },
+      });
+    }
 
     return res.redirect(`/?shop=${shop}`);
   } catch (err) {
@@ -154,7 +189,7 @@ app.post("/deactivate", async (req, res) => {
     const client = await getClient(req, res);
     if (!client) return res.redirect(`/auth?shop=${shop}`);
 
-    const customization = await getCustomizationId(client);
+    const customization = await getCustomization(client);
     if (customization) {
       await client.query({
         data: {
@@ -182,7 +217,13 @@ app.get("/auth", async (req, res) => {
     return res.status(400).send("Missing shop parameter.");
   }
   try {
-    const redirectUrl = await Shopify.Auth.beginAuth(req, res, shop, "/auth/callback", true);
+    const redirectUrl = await Shopify.Auth.beginAuth(
+      req,
+      res,
+      shop,
+      "/auth/callback",
+      false  // offline token
+    );
     return res.redirect(redirectUrl);
   } catch (error) {
     console.error("Auth begin failed:", error);
@@ -193,11 +234,15 @@ app.get("/auth", async (req, res) => {
 // Auth callback
 app.get("/auth/callback", async (req, res) => {
   try {
-    const session = await Shopify.Auth.validateAuthCallback(req, res, req.query);
+    const session = await Shopify.Auth.validateAuthCallback(
+      req,
+      res,
+      req.query
+    );
     return res.redirect(`/?shop=${session.shop}`);
   } catch (error) {
     console.error("Auth callback failed:", error);
-    return res.status(500).send("Authentication callback failed.");
+    return res.status(500).send(`Authentication callback failed: ${error.message}`);
   }
 });
 
@@ -218,7 +263,9 @@ app.post("/api/b2b-free-shipping-customization", async (req, res) => {
     return res.status(200).json(body);
   } catch (error) {
     console.error("Proxy failed:", error);
-    return res.status(500).json({ error: error instanceof Error ? error.message : "Internal error" });
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : "Internal error",
+    });
   }
 });
 
