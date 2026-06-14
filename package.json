@@ -3,14 +3,22 @@
   "version": "1.0.0",
   "license": "UNLICENSED",
   "scripts": {
+    "start": "node backend/index.js",
     "shopify": "shopify",
     "build": "shopify app build",
     "dev": "shopify app dev",
+    "dev:backend": "node backend/index.js",
     "info": "shopify app info",
     "generate": "shopify app generate",
     "deploy": "shopify app deploy"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@shopify/shopify-api": "^5.0.0",
+    "cookie-parser": "^1.4.7",
+    "cookie-session": "^2.0.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.4"
+  },
   "trustedDependencies": [
     "@shopify/plugin-cloudflare"
   ],

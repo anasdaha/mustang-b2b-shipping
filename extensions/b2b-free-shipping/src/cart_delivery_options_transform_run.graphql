@@ -5,11 +5,20 @@ query Input {
         company {
           id
           name
+          # Enables free shipping for this B2B company.
+          # Admin: Companies → [Company] → Metafields
+          # Namespace: "custom", Key: "free_shipping", Type: Boolean
+          metafield(namespace: "custom", key: "free_shipping") {
+            value
+          }
         }
       }
     }
 
     deliveryGroups {
+      deliveryAddress {
+        countryCode
+      }
       deliveryOptions {
         handle
         title
